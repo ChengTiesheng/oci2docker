@@ -2,7 +2,6 @@ package convert
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -16,29 +15,51 @@ import (
 )
 
 type DockerInfo struct {
-	Appdir     string
-	Entrypoint string
-	Expose     string
+	Appdir      string
+	Entrypoint  string
+	Expose      string
+	Environment string
+	Port        bool
+	Env         bool
 }
 
 const (
 	buildTemplate = `
 FROM scratch
 MAINTAINER ChengTiesheng <chengtiesheng@huawei.com>
-ENTRYPOINT ["{{.Entrypoint}}"]
 ADD {{.Appdir}} .
+{{if .Env}} 
+ENV {{.Environment}}
+{{end}}
+ENTRYPOINT ["{{.Entrypoint}}"]
+{{if .Port}}
 EXPOSE {{.Expose}}
+{{end}}
 `
 )
 
-func RunOCI2Docker(path string, imgName string) error {
+func RunOCI2Docker(path string, imgName string, port string) error {
 	appdir := "./rootfs"
 	entrypoint := getEntrypointFromSpecs(path)
+	env := getEnvFromSpecs(path)
+
+	bPort := false
+	if port != "" {
+		bPort = true
+	}
+
+	bEnv := false
+	if env != "" {
+		bEnv = true
+	}
 
 	dockerInfo := DockerInfo{
-		Appdir:     appdir,
-		Entrypoint: entrypoint,
-		Expose:     "80",
+		Appdir:      appdir,
+		Entrypoint:  entrypoint,
+		Expose:      port,
+		Environment: env,
+		Port:        bPort,
+		Env:         bEnv,
 	}
 
 	generateDockerfile(dockerInfo)
@@ -49,6 +70,7 @@ func RunOCI2Docker(path string, imgName string) error {
 	run(exec.Command("cp", "-rf", path+"/rootfs", dirWork))
 
 	run(exec.Command("docker", "build", "-t", imgName, dirWork))
+
 	return nil
 }
 
@@ -63,9 +85,6 @@ func generateDockerfile(dockerInfo DockerInfo) {
 	defer f.Close()
 
 	t.Execute(f, dockerInfo)
-
-	fmt.Printf("Dockerfile generated, you can build the image with: \n")
-	fmt.Printf("$ docker build -t %s .\n", dockerInfo.Entrypoint)
 
 	return
 }
@@ -83,23 +102,53 @@ func createWorkDir() string {
 	if err := ioutil.WriteFile(filepath.Join(idir, "Dockerfile"), data, 0644); err != nil {
 		return ""
 	}
+
+	logrus.Debugf("Docker build context is in %s\n", idir)
 	return idir
 }
 
-func getEntrypointFromSpecs(path string) string {
+func getConfigSpec(path string) *specs.LinuxSpec {
+
 	configPath := path + "/config.json"
 	config, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		logrus.Debugf("Open file config.json failed: %v", err)
-		return ""
+		return nil
 	}
 
-	var spec specs.LinuxSpec
-	err = json.Unmarshal(config, &spec)
+	spec := new(specs.LinuxSpec)
+	err = json.Unmarshal(config, spec)
 	if err != nil {
 		logrus.Debugf("Unmarshal config.json failed: %v", err)
-		return ""
+		return nil
 	}
+
+	return spec
+}
+
+func getRuntimeSpec(path string) *specs.LinuxRuntimeSpec {
+
+	runtimePath := path + "/runtime.json"
+	runtime, err := ioutil.ReadFile(runtimePath)
+	if err != nil {
+		logrus.Debugf("Open file runtime.json failed: %v", err)
+		return nil
+	}
+
+	spec := new(specs.LinuxRuntimeSpec)
+	err = json.Unmarshal(runtime, spec)
+	if err != nil {
+		logrus.Debugf("Unmarshal runtime.json failed: %v", err)
+		return nil
+	}
+
+	return spec
+}
+
+func getEntrypointFromSpecs(path string) string {
+
+	pSpec := getConfigSpec(path)
+	spec := *pSpec
 
 	prefixDir := ""
 	entryPoint := spec.Process.Args
@@ -122,4 +171,17 @@ func getEntrypointFromSpecs(path string) string {
 	}
 
 	return entryPoint[0]
+}
+
+func getEnvFromSpecs(path string) string {
+	env := ""
+	pSpec := getConfigSpec(path)
+	spec := *pSpec
+
+	for index := range spec.Process.Env {
+		env = env + spec.Process.Env[index] + " "
+
+	}
+
+	return env
 }

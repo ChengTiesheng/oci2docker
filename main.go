@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	logrus.SetLevel(logrus.InfoLevel)
+	logrus.SetLevel(logrus.DebugLevel)
 	app := cli.NewApp()
 	app.Name = "oci2docker"
 	app.Usage = "A tool for coverting oci bundle to docker image"
@@ -29,6 +29,11 @@ func main() {
 					Value: "image-name",
 					Usage: "docker image name",
 				},
+				cli.StringFlag{
+					Name:  "port",
+					Value: "",
+					Usage: "exposed port of docker images",
+				},
 			},
 			Action: oci2docker,
 		},
@@ -40,6 +45,8 @@ func main() {
 func oci2docker(c *cli.Context) {
 	ociPath := c.String("oci-bundle")
 	imgName := c.String("image-name")
+	port := c.String("port")
+
 	if ociPath == "" {
 		cli.ShowCommandHelp(c, "convert")
 		return
@@ -49,11 +56,14 @@ func oci2docker(c *cli.Context) {
 		cli.ShowCommandHelp(c, "convert")
 		return
 	}
+
 	_, err := os.Stat(ociPath)
 	if os.IsNotExist(err) {
 		cli.ShowCommandHelp(c, "convert")
 		return
 	}
 
-	convert.RunOCI2Docker(ociPath, imgName)
+	convert.RunOCI2Docker(ociPath, imgName, port)
+
+	return
 }
